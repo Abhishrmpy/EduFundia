@@ -196,4 +196,163 @@ class ExpenseService:
     ) -> ExpenseSummary:
         """Get expense summary and analytics"""
         if not start_date:
-            start_date = date.today().replace(day=1)  # Start
+            start_date = date.today().replace(day=1)  # Start of current month
+        if not end_date:
+            end_date = date.today()
+        
+        # Total expenses
+        total_result = await self.db.execute(
+            select(func.coalesce(func.sum(Expense.amount), 0)).where(
+                and_(
+                    Expense.student_id == student_id,
+                    Expense.expense_date >= start_date,
+                    Expense.expense_date <= end_date
+                )
+            )
+        )
+        total_expenses = float(total_result.scalar() or 0)
+        
+        # Category breakdown
+        category_result = await self.db.execute(
+            select(
+                Expense.category,
+                func.coalesce(func.sum(Expense.amount), 0).label("category_total")
+            ).where(
+                and_(
+                    Expense.student_id == student_id,
+                    Expense.expense_date >= start_date,
+                    Expense.expense_date <= end_date
+                )
+            ).group_by(Expense.category)
+            .order_by(desc("category_total"))
+        )
+        
+        category_breakdown = {}
+        for row in category_result:
+            category_breakdown[row[0].value] = float(row[1])
+        
+        # Calculate daily average
+        days = (end_date - start_date).days + 1
+        daily_average = total_expenses / days if days > 0 else 0
+        
+        # Highest and lowest expenses
+        extreme_result = await self.db.execute(
+            select(
+                func.max(Expense.amount).label("max_amount"),
+                func.min(Expense.amount).label("min_amount"),
+                func.count(Expense.id).label("count")
+            ).where(
+                and_(
+                    Expense.student_id == student_id,
+                    Expense.expense_date >= start_date,
+                    Expense.expense_date <= end_date
+                )
+            )
+        )
+        
+        row = extreme_result.first()
+        highest_expense = float(row[0] or 0)
+        lowest_expense = float(row[1] or 0)
+        expense_count = row[2] or 0
+        
+        # Calculate monthly total (approximate)
+        monthly_total = daily_average * 30
+        
+        return ExpenseSummary(
+            total_expenses=total_expenses,
+            category_breakdown=category_breakdown,
+            daily_average=daily_average,
+            monthly_total=monthly_total,
+            highest_expense=highest_expense,
+            lowest_expense=lowest_expense,
+            expense_count=expense_count
+        )
+    
+    async def get_spending_trend(
+        self,
+        student_id: uuid.UUID,
+        period_days: int = 30
+    ) -> List[Dict[str, Any]]:
+        """Get spending trend over time"""
+        end_date = date.today()
+        start_date = end_date - timedelta(days=period_days)
+        
+        result = await self.db.execute(
+            select(
+                Expense.expense_date,
+                func.coalesce(func.sum(Expense.amount), 0).label("daily_total")
+            ).where(
+                and_(
+                    Expense.student_id == student_id,
+                    Expense.expense_date >= start_date,
+                    Expense.expense_date <= end_date
+                )
+            ).group_by(Expense.expense_date)
+            .order_by(Expense.expense_date)
+        )
+        
+        trend = []
+        for row in result:
+            trend.append({
+                "date": row[0],
+                "amount": float(row[1]),
+                "category": "total"
+            })
+        
+        return trend
+    
+    async def get_category_insights(
+        self,
+        student_id: uuid.UUID,
+        days: int = 90
+    ) -> Dict[str, Any]:
+        """Get insights about spending categories"""
+        end_date = date.today()
+        start_date = end_date - timedelta(days=days)
+        
+        # Get category averages
+        result = await self.db.execute(
+            select(
+                Expense.category,
+                func.avg(Expense.amount).label("avg_amount"),
+                func.count(Expense.id).label("count"),
+                func.sum(Expense.amount).label("total_amount")
+            ).where(
+                and_(
+                    Expense.student_id == student_id,
+                    Expense.expense_date >= start_date,
+                    Expense.expense_date <= end_date
+                )
+            ).group_by(Expense.category)
+            .order_by(desc("total_amount"))
+        )
+        
+        insights = {
+            "categories": [],
+            "total_spent": 0,
+            "most_frequent_category": None,
+            "most_expensive_category": None
+        }
+        
+        max_count = 0
+        max_total = 0
+        
+        for row in result:
+            category_data = {
+                "category": row[0].value,
+                "average_amount": float(row[1] or 0),
+                "transaction_count": row[2] or 0,
+                "total_amount": float(row[3] or 0)
+            }
+            insights["categories"].append(category_data)
+            insights["total_spent"] += category_data["total_amount"]
+            
+            if category_data["transaction_count"] > max_count:
+                max_count = category_data["transaction_count"]
+                insights["most_frequent_category"] = category_data["category"]
+            
+            if category_data["total_amount"] > max_total:
+                max_total = category_data["total_amount"]
+                insights["most_expensive_category"] = category_data["category"]
+        
+        return insights
