@@ -5,30 +5,43 @@ import json
 import asyncio
 from google.cloud import aiplatform
 from google.oauth2 import service_account
-from .config import settings
+from ..core.config import settings
 from ..models.student import Student
 from ..models.expense import Expense
-from ..schemas.budget import BudgetCreate
 
 logger = logging.getLogger(__name__)
 
 
 class VertexAIClient:
+    """Vertex AI (Gemini) integration service"""
+    
     def __init__(self):
         self.project = settings.google_cloud_project
         self.location = settings.vertex_ai_location
         self.model_name = settings.vertex_ai_model
+        self.initialized = False
         
-        # Initialize Vertex AI
+        self._initialize_vertex_ai()
+    
+    def _initialize_vertex_ai(self):
+        """Initialize Vertex AI client"""
         try:
+            if not self.project:
+                logger.warning("Google Cloud project not configured. Vertex AI will use mock mode.")
+                return
+            
+            # Initialize Vertex AI
             aiplatform.init(
                 project=self.project,
                 location=self.location,
             )
+            
+            self.initialized = True
             logger.info(f"Vertex AI initialized for project {self.project}")
+            
         except Exception as e:
             logger.error(f"Failed to initialize Vertex AI: {e}")
-            raise
+            self.initialized = False
     
     async def generate_budget_recommendation(
         self,
@@ -38,9 +51,14 @@ class VertexAIClient:
     ) -> Dict[str, Any]:
         """Generate AI-powered budget recommendations"""
         
+        # Build prompt
         prompt = self._build_budget_prompt(student, expenses, historical_budgets)
         
         try:
+            if not self.initialized:
+                logger.warning("Vertex AI not initialized, using rule-based budget")
+                return self._generate_rule_based_budget(student, expenses)
+            
             # Call Vertex AI Gemini API
             model = aiplatform.GenerativeModel(self.model_name)
             
@@ -66,13 +84,13 @@ class VertexAIClient:
                 budget_data, student, expenses
             )
             
-            logger.info(f"Generated budget recommendation for student {student.id}")
+            logger.info(f"Generated AI budget recommendation for student {student.id}")
             return validated_budget
             
         except Exception as e:
             logger.error(f"AI budget generation failed: {e}")
             # Fallback to rule-based budgeting
-            return self._generate_fallback_budget(student, expenses)
+            return self._generate_rule_based_budget(student, expenses)
     
     def _build_budget_prompt(
         self,
@@ -89,11 +107,12 @@ class VertexAIClient:
         You are a financial advisor for college students in India. Generate a personalized monthly budget.
         
         STUDENT PROFILE:
-        - Course: {student.course} ({student.year_of_study} year)
-        - Location: {student.current_city}, {student.home_state}
+        - Course: {student.course_name} (Year {student.current_year} of {student.course_duration})
+        - Location: {student.city}, {student.state}
         - Family Income: ₹{student.family_annual_income:,.0f}/year
         - Monthly Allowance: ₹{student.monthly_allowance or 0}/month
         - Has Education Loan: {student.has_education_loan}
+        - Loan Amount: ₹{student.education_loan_amount or 0}
         
         CURRENT SPENDING (Last 3 months):
         {expense_summary}
@@ -112,7 +131,7 @@ class VertexAIClient:
         8. Savings & Emergency Fund
         
         CONSIDER THESE LOCAL FACTORS:
-        - City cost of living: {self._get_city_cost_index(student.current_city)}
+        - City cost of living: {self._get_city_cost_index(student.city)}
         - Student discounts availability
         - Seasonal variations (exam periods, festivals)
         
@@ -120,8 +139,8 @@ class VertexAIClient:
         {{
             "total_monthly_budget": number,
             "categories": {{
-                "tuition": {{"amount": number, "percentage": number, "rationale": "string"}},
-                "hostel": {{"amount": number, "percentage": number, "rationale": "string"}},
+                "tuition_fee": {{"amount": number, "percentage": number, "rationale": "string"}},
+                "hostel_fee": {{"amount": number, "percentage": number, "rationale": "string"}},
                 "food": {{"amount": number, "percentage": number, "rationale": "string"}},
                 "transport": {{"amount": number, "percentage": number, "rationale": "string"}},
                 "books": {{"amount": number, "percentage": number, "rationale": "string"}},
@@ -135,6 +154,7 @@ class VertexAIClient:
         }}
         
         Ensure the total is realistic for the student's financial situation.
+        Provide rationale for each category allocation.
         """
         
         return prompt
@@ -155,11 +175,58 @@ class VertexAIClient:
     
     def _get_city_cost_index(self, city: str) -> float:
         """Get cost of living index for Indian cities"""
-        # This could be expanded with actual data
         city_costs = {
-            "mumbai": 1.5, "delhi": 1.3, "bangalore": 1.4,
-            "chennai": 1.2, "hyderabad": 1.1, "pune": 1.2,
-            "kolkata": 1.0, "ahmedabad": 0.9
+            "mumbai": 1.5, "bombay": 1.5,
+            "delhi": 1.3, "new delhi": 1.3,
+            "bangalore": 1.4, "bengaluru": 1.4,
+            "chennai": 1.2, "madras": 1.2,
+            "hyderabad": 1.1,
+            "pune": 1.2, "poona": 1.2,
+            "kolkata": 1.0, "calcutta": 1.0,
+            "ahmedabad": 0.9,
+            "jaipur": 0.8,
+            "lucknow": 0.8,
+            "kanpur": 0.7,
+            "nagpur": 0.8,
+            "indore": 0.8,
+            "thane": 1.3,
+            "bhopal": 0.8,
+            "visakhapatnam": 0.8,
+            "patna": 0.8,
+            "vadodara": 0.9,
+            "ghaziabad": 1.0,
+            "ludhiana": 0.8,
+            "agra": 0.7,
+            "nashik": 0.9,
+            "faridabad": 1.0,
+            "meerut": 0.8,
+            "rajkot": 0.8,
+            "kalyan": 1.2,
+            "vasai": 1.2,
+            "varanasi": 0.7,
+            "srinagar": 0.8,
+            "aurangabad": 0.8,
+            "dhanbad": 0.7,
+            "amritsar": 0.8,
+            "navi mumbai": 1.4,
+            "allahabad": 0.7,
+            "ranchi": 0.8,
+            "howrah": 0.9,
+            "coimbatore": 0.9,
+            "jabalpur": 0.7,
+            "gwalior": 0.7,
+            "vijayawada": 0.8,
+            "jodhpur": 0.7,
+            "madurai": 0.8,
+            "raipur": 0.8,
+            "kota": 0.7,
+            "guwahati": 0.8,
+            "chandigarh": 1.1,
+            "solapur": 0.7,
+            "hubli": 0.7,
+            "dharwad": 0.7,
+            "tirunelveli": 0.7,
+            "tiruchirappalli": 0.8,
         }
         return city_costs.get(city.lower(), 1.0)
     
@@ -167,31 +234,36 @@ class VertexAIClient:
         """Parse and validate AI response"""
         try:
             # Extract JSON from response
-            lines = response_text.strip().split('\n')
-            json_start = None
-            json_end = None
-            
-            for i, line in enumerate(lines):
-                if line.strip().startswith('{'):
-                    json_start = i
-                if line.strip().endswith('}'):
-                    json_end = i
-                    break
-            
-            if json_start is not None and json_end is not None:
-                json_str = '\n'.join(lines[json_start:json_end + 1])
+            import re
+            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            if json_match:
+                json_str = json_match.group()
                 return json.loads(json_str)
             else:
-                # Try to find JSON in the entire text
-                import re
-                json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+                # Try to find JSON array
+                json_match = re.search(r'\[.*\]', response_text, re.DOTALL)
                 if json_match:
-                    return json.loads(json_match.group())
-                else:
-                    raise ValueError("No JSON found in response")
-                    
+                    json_str = json_match.group()
+                    data = json.loads(json_str)
+                    if isinstance(data, list) and len(data) > 0:
+                        return data[0]
+                
+                raise ValueError("No valid JSON found in response")
+                
         except (json.JSONDecodeError, ValueError) as e:
             logger.error(f"Failed to parse AI response: {e}")
+            # Try to extract just the JSON part
+            try:
+                # Find text between first { and last }
+                start = response_text.find('{')
+                end = response_text.rfind('}') + 1
+                if start != -1 and end != 0:
+                    json_str = response_text[start:end]
+                    return json.loads(json_str)
+            except:
+                pass
+            
+            logger.error(f"Raw response: {response_text[:500]}...")
             raise
     
     def _validate_budget_recommendation(
@@ -205,35 +277,49 @@ class VertexAIClient:
         total = budget_data.get("total_monthly_budget", 0)
         
         # Cap budget based on student's financial capacity
-        max_reasonable = float(student.monthly_allowance or 0) * 1.2  # 20% buffer
+        monthly_income = student.monthly_allowance or (student.family_annual_income / 12)
+        max_reasonable = monthly_income * 1.2  # 20% buffer
+        
         if total > max_reasonable and max_reasonable > 0:
             scaling_factor = max_reasonable / total
-            for category in budget_data["categories"].values():
-                category["amount"] *= scaling_factor
-                category["percentage"] = (category["amount"] / max_reasonable) * 100
+            for category in budget_data.get("categories", {}).values():
+                if isinstance(category, dict):
+                    category["amount"] = category.get("amount", 0) * scaling_factor
+                    category["percentage"] = (category.get("amount", 0) / max_reasonable) * 100
             budget_data["total_monthly_budget"] = max_reasonable
-            budget_data["risk_warnings"].append(
+            budget_data.setdefault("risk_warnings", []).append(
                 "Budget capped to 120% of monthly allowance for sustainability"
             )
         
         # Ensure minimum allocation for essentials
-        essentials = ["tuition", "hostel", "food"]
-        for essential in essentials:
-            if essential in budget_data["categories"]:
-                current_pct = budget_data["categories"][essential]["percentage"]
-                if current_pct < 10:  # Minimum 10% for essentials
-                    budget_data["categories"][essential]["percentage"] = 10
-                    budget_data["categories"][essential]["amount"] = total * 0.1
-                    budget_data["categories"][essential]["rationale"] += " (Adjusted to minimum)"
+        essentials = ["tuition_fee", "hostel_fee", "food"]
+        categories = budget_data.get("categories", {})
         
-        # Recalculate percentages
-        total_amount = sum(cat["amount"] for cat in budget_data["categories"].values())
-        for category in budget_data["categories"].values():
-            category["percentage"] = (category["amount"] / total_amount) * 100
+        for essential in essentials:
+            if essential in categories:
+                category = categories[essential]
+                if isinstance(category, dict):
+                    current_pct = category.get("percentage", 0)
+                    if current_pct < 10:  # Minimum 10% for essentials
+                        category["percentage"] = 10
+                        category["amount"] = total * 0.1
+                        rationale = category.get("rationale", "")
+                        category["rationale"] = f"{rationale} (Adjusted to minimum)"
+        
+        # Recalculate percentages if needed
+        total_amount = sum(
+            cat.get("amount", 0) for cat in categories.values() 
+            if isinstance(cat, dict)
+        )
+        
+        if total_amount > 0:
+            for category in categories.values():
+                if isinstance(category, dict):
+                    category["percentage"] = (category.get("amount", 0) / total_amount) * 100
         
         return budget_data
     
-    def _generate_fallback_budget(
+    def _generate_rule_based_budget(
         self,
         student: Student,
         expenses: List[Expense]
@@ -241,16 +327,17 @@ class VertexAIClient:
         """Rule-based fallback budget generation"""
         
         # Base budget on monthly allowance or average Indian student spending
-        base_amount = float(student.monthly_allowance or 10000)
+        monthly_income = student.monthly_allowance or (student.family_annual_income / 12)
+        base_amount = monthly_income or 10000  # Default ₹10,000 if no income data
         
         # Adjust for city cost
-        city_factor = self._get_city_cost_index(student.current_city)
+        city_factor = self._get_city_cost_index(student.city)
         adjusted_amount = base_amount * city_factor
         
-        # Standard allocation percentages (based on Indian student spending patterns)
+        # Standard allocation percentages for Indian students
         allocations = {
-            "tuition": {"percentage": 40, "rationale": "Academic fees and college expenses"},
-            "hostel": {"percentage": 25, "rationale": "Accommodation and utilities"},
+            "tuition_fee": {"percentage": 40, "rationale": "Academic fees and college expenses"},
+            "hostel_fee": {"percentage": 25, "rationale": "Accommodation and utilities"},
             "food": {"percentage": 20, "rationale": "Food and groceries"},
             "transport": {"percentage": 5, "rationale": "Local transportation"},
             "books": {"percentage": 5, "rationale": "Study materials and books"},
@@ -271,15 +358,17 @@ class VertexAIClient:
         return {
             "total_monthly_budget": round(adjusted_amount, 2),
             "categories": categories,
-            "ai_confidence_score": 0.7,  # Lower confidence for rule-based
+            "ai_confidence_score": 0.7,
             "key_recommendations": [
                 "Consider applying for scholarships to reduce financial burden",
                 "Track expenses weekly to stay within budget",
-                "Look for student discounts on transportation and entertainment"
+                "Look for student discounts on transportation and entertainment",
+                "Build an emergency fund of at least 3 months' expenses"
             ],
             "risk_warnings": [
                 "Based on rule-based allocation due to AI service limitation",
-                "Adjust percentages based on actual spending patterns"
+                "Adjust percentages based on actual spending patterns",
+                "Monitor spending closely during initial months"
             ]
         }
     
@@ -289,45 +378,15 @@ class VertexAIClient:
         expenses: List[Expense],
         upcoming_fees: List[Dict]
     ) -> Dict[str, Any]:
-        """Calculate financial stress and dropout risk scores"""
+        """Calculate financial stress and dropout risk using AI"""
         
-        prompt = f"""
-        Calculate financial stress score (0-1) and dropout risk score (0-1) for a student.
-        
-        STUDENT DATA:
-        - Course: {student.course}
-        - Year: {student.year_of_study}
-        - Family Income: ₹{student.family_annual_income}/year
-        - Monthly Expenses: ₹{sum(e.amount for e in expenses if e.transaction_type.value == 'expense')}/month
-        - Upcoming Fees: {json.dumps(upcoming_fees)}
-        - Has Loan: {student.has_education_loan}
-        - Loan Amount: {student.loan_amount or 0}
-        
-        CONSIDER THESE FACTORS:
-        1. Income-to-expense ratio
-        2. Debt burden
-        3. Course completion timeline
-        4. Available scholarships
-        5. Emergency fund availability
-        6. Family support system
-        7. Part-time work possibilities
-        
-        OUTPUT FORMAT (JSON):
-        {{
-            "financial_stress_score": number (0-1),
-            "dropout_risk_score": number (0-1),
-            "key_factors": {{
-                "income_expense_ratio": number,
-                "debt_burden": number,
-                "fee_pressure": number,
-                "support_system": number
-            }},
-            "interventions": ["string"],
-            "confidence_level": number
-        }}
-        """
+        prompt = self._build_stress_analysis_prompt(student, expenses, upcoming_fees)
         
         try:
+            if not self.initialized:
+                logger.warning("Vertex AI not initialized, using rule-based analysis")
+                return self._generate_rule_based_stress_analysis(student, expenses, upcoming_fees)
+            
             model = aiplatform.GenerativeModel(self.model_name)
             response = await asyncio.to_thread(
                 model.generate_content,
@@ -335,62 +394,188 @@ class VertexAIClient:
                 generation_config={"max_output_tokens": 1024}
             )
             
-            return json.loads(response.text)
+            if not response.text:
+                raise ValueError("Empty response from AI model")
+            
+            # Parse response
+            result = self._parse_stress_response(response.text)
+            return result
             
         except Exception as e:
-            logger.error(f"Stress score calculation failed: {e}")
-            return self._calculate_fallback_stress_score(student, expenses, upcoming_fees)
+            logger.error(f"AI stress analysis failed: {e}")
+            return self._generate_rule_based_stress_analysis(student, expenses, upcoming_fees)
     
-    def _calculate_fallback_stress_score(
+    def _build_stress_analysis_prompt(
+        self,
+        student: Student,
+        expenses: List[Expense],
+        upcoming_fees: List[Dict]
+    ) -> str:
+        """Build prompt for stress analysis"""
+        
+        expense_summary = self._summarize_expenses(expenses)
+        total_upcoming_fees = sum(fee.get("amount", 0) for fee in upcoming_fees)
+        
+        prompt = f"""
+        Analyze financial stress and dropout risk for an Indian college student.
+        
+        STUDENT PROFILE:
+        - Course: {student.course_name} (Year {student.current_year})
+        - University: {student.university_name}
+        - Location: {student.city}, {student.state}
+        - Family Annual Income: ₹{student.family_annual_income:,.0f}
+        - Monthly Allowance: ₹{student.monthly_allowance or 0}
+        - Has Education Loan: {student.has_education_loan}
+        - Loan Amount: ₹{student.education_loan_amount or 0}
+        - Caste Category: {student.caste_category.value}
+        
+        FINANCIAL SITUATION:
+        - Recent Expenses (3 months): {expense_summary}
+        - Upcoming Fees: ₹{total_upcoming_fees:,.0f}
+        - Current CGPA: {student.current_cgpa or 'Not available'}
+        
+        ANALYSIS REQUEST:
+        1. Calculate financial stress score (0-100, higher = more stress)
+        2. Calculate dropout risk score (0-100, higher = higher risk)
+        3. Identify key contributing factors
+        4. Provide actionable recommendations
+        
+        OUTPUT FORMAT (JSON):
+        {{
+            "financial_stress_score": number (0-100),
+            "dropout_risk_score": number (0-100),
+            "key_factors": {{
+                "income_expense_ratio": number (0-100),
+                "debt_burden": number (0-100),
+                "fee_pressure": number (0-100),
+                "academic_pressure": number (0-100),
+                "family_support": number (0-100)
+            }},
+            "interventions": ["string"],
+            "confidence_level": number (0-1)
+        }}
+        
+        Consider Indian context:
+        - Cost of living in {student.city}
+        - Scholarship availability for {student.caste_category.value} category
+        - Part-time work opportunities for students
+        - Education loan repayment pressures
+        - Family expectations and support
+        """
+        
+        return prompt
+    
+    def _parse_stress_response(self, response_text: str) -> Dict:
+        """Parse stress analysis response"""
+        try:
+            import re
+            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            if json_match:
+                return json.loads(json_match.group())
+        except:
+            pass
+        
+        # Default fallback
+        return {
+            "financial_stress_score": 50,
+            "dropout_risk_score": 50,
+            "key_factors": {
+                "income_expense_ratio": 50,
+                "debt_burden": 50,
+                "fee_pressure": 50,
+                "academic_pressure": 50,
+                "family_support": 50
+            },
+            "interventions": [
+                "Monitor expenses closely",
+                "Explore scholarship opportunities",
+                "Consider part-time work if schedule permits"
+            ],
+            "confidence_level": 0.6
+        }
+    
+    def _generate_rule_based_stress_analysis(
         self,
         student: Student,
         expenses: List[Expense],
         upcoming_fees: List[Dict]
     ) -> Dict:
-        """Fallback rule-based stress scoring"""
+        """Rule-based stress analysis fallback"""
         
-        monthly_expenses = sum(e.amount for e in expenses if e.transaction_type.value == 'expense')
-        monthly_income = float(student.monthly_allowance or 0)
+        # Calculate expense-to-income ratio
+        monthly_income = student.monthly_allowance or (student.family_annual_income / 12)
+        monthly_expenses = sum(e.amount for e in expenses) / 3  # Average over 3 months
         
-        # Calculate income-to-expense ratio
         if monthly_income > 0:
             expense_ratio = monthly_expenses / monthly_income
+            expense_score = min(expense_ratio * 100, 100)
         else:
-            expense_ratio = 2.0  # High stress if no income
+            expense_score = 100
         
-        # Debt burden factor
-        debt_burden = 0
-        if student.has_education_loan and student.loan_amount:
-            debt_burden = min(student.loan_amount / (student.family_annual_income or 1), 1)
+        # Debt burden
+        debt_score = 0
+        if student.has_education_loan and student.education_loan_amount:
+            if student.family_annual_income > 0:
+                debt_ratio = student.education_loan_amount / student.family_annual_income
+                debt_score = min(debt_ratio * 200, 100)
         
         # Fee pressure
-        total_upcoming_fees = sum(fee.get("amount", 0) for fee in upcoming_fees)
-        fee_pressure = min(total_upcoming_fees / (student.family_annual_income or 1), 1)
+        total_fees = sum(fee.get("amount", 0) for fee in upcoming_fees)
+        fee_score = 0
+        if student.family_annual_income > 0:
+            fee_ratio = total_fees / student.family_annual_income
+            fee_score = min(fee_ratio * 100, 100)
         
-        # Calculate composite scores
-        financial_stress = min(0.3 * expense_ratio + 0.4 * debt_burden + 0.3 * fee_pressure, 1)
+        # Academic pressure
+        academic_score = 0
+        if student.current_cgpa:
+            if student.current_cgpa < 6.0:
+                academic_score = 80
+            elif student.current_cgpa < 7.0:
+                academic_score = 50
+            else:
+                academic_score = 20
         
-        # Dropout risk (higher if stress > 0.7 and in early years)
-        dropout_risk = financial_stress
-        if student.year_of_study in ["1st", "2nd"] and financial_stress > 0.7:
-            dropout_risk = min(dropout_risk * 1.3, 1)
+        # Composite scores
+        financial_stress = (
+            expense_score * 0.4 +
+            debt_score * 0.3 +
+            fee_score * 0.3
+        )
+        
+        dropout_risk = (
+            financial_stress * 0.6 +
+            academic_score * 0.4
+        )
         
         return {
-            "financial_stress_score": round(financial_stress, 3),
-            "dropout_risk_score": round(dropout_risk, 3),
+            "financial_stress_score": min(financial_stress, 100),
+            "dropout_risk_score": min(dropout_risk, 100),
             "key_factors": {
-                "income_expense_ratio": round(expense_ratio, 3),
-                "debt_burden": round(debt_burden, 3),
-                "fee_pressure": round(fee_pressure, 3),
-                "support_system": 0.5  # Default
+                "income_expense_ratio": expense_score,
+                "debt_burden": debt_score,
+                "fee_pressure": fee_score,
+                "academic_pressure": academic_score,
+                "family_support": 50  # Default assumption
             },
             "interventions": [
-                "Consider part-time work opportunities",
+                "Create a detailed budget and track expenses",
                 "Apply for need-based scholarships",
-                "Explore education loan restructuring"
+                "Explore on-campus work opportunities",
+                "Discuss payment plans for upcoming fees"
             ],
-            "confidence_level": 0.6
+            "confidence_level": 0.7
         }
+    
+    async def match_scholarships(
+        self,
+        student: Student,
+        available_scholarships: List[Dict]
+    ) -> List[Dict[str, Any]]:
+        """Use AI to match scholarships with student profile"""
+        # This would involve more complex AI matching
+        # For now, return simplified version
+        return []
 
 
 # Singleton instance
