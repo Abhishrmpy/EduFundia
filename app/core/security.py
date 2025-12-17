@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
 from fastapi import HTTPException, status, Depends, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 # Initialize Firebase if credentials are available
 firebase_app = None
 try:
-    from ..core.config import settings
+    from .config import settings
     
     if all([
         settings.firebase_project_id,
