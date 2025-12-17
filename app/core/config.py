@@ -1,14 +1,18 @@
 from typing import Optional, List
 from pydantic_settings import BaseSettings
 from pydantic import PostgresDsn, validator, Field
+import secrets
 
 
 class Settings(BaseSettings):
     # App
-    app_name: str = "Smart Aid & Budget"
+    app_name: str = "Smart Aid & Budget Backend"
     environment: str = "development"
     debug: bool = False
     api_v1_str: str = "/api/v1"
+    secret_key: str = Field(default_factory=lambda: secrets.token_urlsafe(32))
+    
+    # CORS
     cors_origins: List[str] = Field(default=["http://localhost:3000"])
     
     # Database
@@ -35,7 +39,11 @@ class Settings(BaseSettings):
     rate_limit_period: int = 60
     
     # External APIs
-    scholarship_api_base_url: str = "https://api.scholarships.com/v1"
+    scholarship_api_base_url: str = "https://api.example.com/scholarships/v1"
+    
+    # File Upload
+    max_upload_size: int = 10 * 1024 * 1024  # 10MB
+    allowed_file_types: List[str] = Field(default=["image/jpeg", "image/png", "application/pdf"])
     
     class Config:
         env_file = ".env"
@@ -45,7 +53,13 @@ class Settings(BaseSettings):
     def assemble_db_connection(cls, v: Optional[str]) -> Optional[str]:
         if isinstance(v, str):
             return v
-        return "postgresql+asyncpg://smartaid:smartaid123@localhost:5432/smartaid_db"
+        return "postgresql+asyncpg://postgres:password@localhost:5432/smartaid_db"
+    
+    @validator("firebase_private_key", pre=True)
+    def validate_firebase_key(cls, v: Optional[str]) -> Optional[str]:
+        if v and "\\n" in v:
+            return v.replace("\\n", "\n")
+        return v
 
 
 settings = Settings()

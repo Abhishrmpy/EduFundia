@@ -4,15 +4,15 @@ services:
   postgres:
     image: postgres:15-alpine
     environment:
-      POSTGRES_USER: smartaid
-      POSTGRES_PASSWORD: smartaid123
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
       POSTGRES_DB: smartaid_db
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U smartaid"]
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -30,9 +30,10 @@ services:
     ports:
       - "8000:8080"
     environment:
-      DATABASE_URL: postgresql+asyncpg://smartaid:smartaid123@postgres:5432/smartaid_db
+      DATABASE_URL: postgresql+asyncpg://postgres:password@postgres:5432/smartaid_db
       REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: development
+      DEBUG: "True"
     depends_on:
       postgres:
         condition: service_healthy
@@ -40,7 +41,8 @@ services:
         condition: service_started
     volumes:
       - .:/app
-      - ./logs:/app/logs
+    stdin_open: true
+    tty: true
 
 volumes:
   postgres_data:
